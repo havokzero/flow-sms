@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "quiet_success": True,
     "live_refresh_seconds": 5,
     "terminal_message_debug": False,
+    "terminal_menu_enabled": False,
     "bulkvs_api_url": "https://portal.bulkvs.com/api/v1.0",
     "bulkvs_username": "",
     "bulkvs_token": "",
@@ -77,6 +78,7 @@ class C:
 LOCK = threading.Lock()
 NUMBER_LABELS: dict[str, str] = {}
 POLL_THREAD_STARTED = False
+WEB_THREAD_STARTED = False
 
 
 def utc_now() -> datetime:
@@ -526,7 +528,7 @@ def start_poller_once() -> None:
     if POLL_THREAD_STARTED:
         return
     if setting_bool("auto_poll"):
-        threading.Thread(target=poll_messages_forever, daemon=True).start()
+        threading.Thread(target=poll_messages_forever, daemon=True, name="flowsms-poller").start()
         POLL_THREAD_STARTED = True
 
 
@@ -629,17 +631,31 @@ def terminal_menu_loop() -> None:
             print(f"{C.RED}Menu error:{C.RESET} {exc}")
 
 
-if __name__ == "__main__":
-    from flask_app import create_app
+def run_web_server(app: Any) -> None:
+    global WEB_THREAD_STARTED
+    if WEB_THREAD_STARTED:
+        return
 
-    if not setting_str("flowroute_access_key") or not setting_str("flowroute_secret_key"):
-        raise RuntimeError("Flowroute credentials missing in settings.json")
-
-    populate_number_labels()
-
-    app = create_app()
     port = setting_int("port")
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.ERROR)
 
+    web_thread = threading.Thread(
+        target=lambda: app.run(
+            host=setting_str("host") or "0.0.0.0",
+            port=port,
+            debug=False,
+            use_reloader=False,
+        ),
+        daemon=True,
+        name="flowsms-web",
+    )
+    web_thread.start()
+    WEB_THREAD_STARTED = True
+
+
+def print_startup_banner() -> None:
+    port = setting_int("port")
     print(f"{C.GRAY}settings:{C.RESET} {SETTINGS_PATH}")
     print(f"{C.GRAY}log file:{C.RESET} {LOG_PATH}")
     print(f"{C.GRAY}attachments:{C.RESET} {ATTACHMENTS_DIR}")
@@ -652,25 +668,29 @@ if __name__ == "__main__":
     print(f"{C.BLUE}[webhook]{C.RESET} http://127.0.0.1:{port}/webhook")
     print(f"{C.BLUE}[webhook bulkvs]{C.RESET} http://127.0.0.1:{port}/webhook/bulkvs")
 
-    log = logging.getLogger("werkzeug")
-    log.setLevel(logging.ERROR)
 
-    web_thread = threading.Thread(
-        target=lambda: app.run(
-            host=setting_str("host") or "0.0.0.0",
-            port=port,
-            debug=False,
-            use_reloader=False,
-        ),
-        daemon=True,
-    )
-    web_thread.start()
-
-    start_poller_once()
-    terminal_menu_loop()
-
+def service_idle_loop() -> None:
     try:
         while True:
-            time.sleep(1)
+            time.sleep(60)
     except KeyboardInterrupt:
         print("\nShutting down.")
+
+
+if __name__ == "__main__":
+    from flask_app import create_app
+
+    if not setting_str("flowroute_access_key") or not setting_str("flowroute_secret_key"):
+        raise RuntimeError("Flowroute credentials missing in settings.json")
+
+    populate_number_labels()
+    app = create_app()
+
+    print_startup_banner()
+    run_web_server(app)
+    start_poller_once()
+
+    if setting_bool("terminal_menu_enabled"):
+        terminal_menu_loop()
+
+    service_idle_loop()

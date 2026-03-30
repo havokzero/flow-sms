@@ -23,7 +23,6 @@ from main import (
     send_mms_v21,
     setting_int,
     setting_str,
-    start_poller_once,
 )
 from receive_sms import process_sms_message
 from receive_mms import process_mms_message
@@ -31,7 +30,6 @@ from receive_mms import process_mms_message
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    start_poller_once()
 
     def render_notice(kind: str, message: str) -> str:
         if not message:
@@ -131,10 +129,6 @@ def create_app() -> Flask:
         return str(path)
 
     def extract_bulkvs_message(payload: dict) -> dict:
-        """
-        BulkVS webhook payload format can vary. This function is intentionally tolerant.
-        We keep raw payloads either way so you can refine parsing from real samples.
-        """
         direction = str(payload.get("direction", "inbound")).strip().lower() or "inbound"
         from_num = (
             payload.get("from")
@@ -560,6 +554,8 @@ def create_app() -> Flask:
                 <a href="/api/account-numbers" target="_blank">Flowroute numbers</a>
                 <a href="/api/did-labels" target="_blank">DID labels</a>
                 <a href="/api/bulkvs/account" target="_blank">BulkVS account</a>
+                <a href="/api/bulkvs/mdr?type=sms" target="_blank">BulkVS MDR SMS</a>
+                <a href="/api/bulkvs/mdr?type=mms" target="_blank">BulkVS MDR MMS</a>
                 <button id="poll-now-btn" onclick="pollNow()">Poll now</button>
                 <button id="toggle-refresh-btn" onclick="toggleAutoRefresh()">Pause refresh</button>
                 <button onclick="postAndReload('/api/clear')">Clear inbox</button>
@@ -846,7 +842,11 @@ def create_app() -> Flask:
 
     @app.get("/api/bulkvs/mdr")
     def api_bulkvs_mdr():
-        status, data = bulkvs_request("GET", "/mdr")
+        msg_type = request.args.get("type", "sms").strip().lower()
+        if msg_type not in {"sms", "mms"}:
+            return jsonify({"status": "error", "message": "type must be sms or mms"}), 400
+
+        status, data = bulkvs_request("GET", f"/mdr?type={msg_type}")
         return jsonify({"http_status": status, "response": data}), status if status else 500
 
     @app.post("/api/clear")
