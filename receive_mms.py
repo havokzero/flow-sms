@@ -146,6 +146,17 @@ def collect_url_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def classify_media_item(media: dict[str, Any]) -> str:
+    url = str(media.get("url", "") or "").strip()
+    local_path = str(media.get("local_path", "") or "").strip()
+
+    if local_path:
+        return "downloaded"
+    if url:
+        return "signed_url_available"
+    return "signed_url_missing"
+
+
 def extract_mms_media(message: dict[str, Any]) -> list[dict[str, Any]]:
     relationships = message.get("relationships", {})
     included = message.get("included", [])
@@ -171,7 +182,6 @@ def extract_mms_media(message: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(media_data, list):
             media_refs = media_data
 
-    # Normal Flowroute-ish path
     for ref in media_refs:
         if not isinstance(ref, dict):
             continue
@@ -199,30 +209,35 @@ def extract_mms_media(message: dict[str, Any]) -> list[dict[str, Any]]:
         raw_self = links.get("self")
         self_link = raw_self.strip() if isinstance(raw_self, str) else ""
 
-        media_items.append({
+        media = {
             "id": media_id,
             "file_name": file_name,
             "file_size": attrs.get("file_size"),
             "mime_type": mime_type,
             "url": url,
             "self_link": self_link,
-        })
+            "provider_uri_accessible": False,
+        }
+        media["download_status"] = classify_media_item(media)
+        media_items.append(media)
 
-    # Fallback for loose provider payloads like BulkVS or custom webhook mappings
     if not media_items:
         for key in ("media", "media_urls", "attachments", "files", "mms", "mediaUrls"):
             value = message.get(key)
             if isinstance(value, list):
                 for idx, item in enumerate(value, start=1):
                     if isinstance(item, str) and item.strip():
-                        media_items.append({
+                        media = {
                             "id": f"inline-{idx}",
                             "file_name": f"attachment_{idx}",
                             "file_size": None,
                             "mime_type": "",
                             "url": item.strip(),
                             "self_link": item.strip(),
-                        })
+                            "provider_uri_accessible": True,
+                        }
+                        media["download_status"] = classify_media_item(media)
+                        media_items.append(media)
                     elif isinstance(item, dict):
                         maybe_url = (
                             item.get("url")
@@ -231,14 +246,17 @@ def extract_mms_media(message: dict[str, Any]) -> list[dict[str, Any]]:
                             or item.get("href")
                             or ""
                         )
-                        media_items.append({
+                        media = {
                             "id": str(item.get("id", f"inline-{idx}")),
                             "file_name": str(item.get("file_name") or item.get("name") or f"attachment_{idx}"),
                             "file_size": item.get("file_size") or item.get("size"),
                             "mime_type": str(item.get("mime_type") or item.get("content_type") or ""),
                             "url": str(maybe_url).strip(),
                             "self_link": str(item.get("self") or maybe_url or "").strip(),
-                        })
+                            "provider_uri_accessible": True,
+                        }
+                        media["download_status"] = classify_media_item(media)
+                        media_items.append(media)
 
     return media_items
 
@@ -278,8 +296,6 @@ def enrich_mms_message(message: dict[str, Any], source: str = "") -> dict[str, A
 
     provider = infer_provider(message, source=source)
     if provider != "flowroute":
-        # BulkVS or anything else should stay as-is unless you later add
-        # a provider-specific MDR/detail fetch.
         return message
 
     record_id = str(message.get("id", "")).strip()
@@ -388,8 +404,9 @@ def format_mms_block(message: dict[str, Any], provider: str) -> str:
         url = media.get("url") or ""
         self_link = media.get("self_link") or ""
         local_path = media.get("local_path") or ""
+        status_text = media.get("download_status", "unknown")
 
-        lines.append(f"           [{idx}] {name} | {mime} | {size} bytes")
+        lines.append(f"           [{idx}] {name} | {mime} | {size} bytes | {status_text}")
         if url:
             lines.append(f"               URL:   {url}")
         if self_link:
@@ -421,20 +438,29 @@ def process_mms_message(message: dict[str, Any], source: str, webhook_payload: d
     write_probe_bundle(msg_id, provider, webhook_payload, mdr_payload)
 
     media_items = extract_mms_media(enriched)
-    downloaded_files = []
+    downloaded_files: list[str] = []
 
     for idx, media in enumerate(media_items, start=1):
         file_name = media.get("file_name") or media.get("id") or "attachment"
-        local_path = download_media_file(
-            media.get("url", ""),
-            msg_id,
-            idx,
-            file_name,
-            media.get("mime_type", ""),
-        )
-        if local_path:
-            media["local_path"] = local_path
-            downloaded_files.append(local_path)
+        url = str(media.get("url", "") or "").strip()
+
+        if url:
+            local_path = download_media_file(
+                url,
+                msg_id,
+                idx,
+                file_name,
+                media.get("mime_type", ""),
+            )
+            if local_path:
+                media["local_path"] = local_path
+                media["download_status"] = "downloaded"
+                media["downloaded_at"] = utc_now_str()
+                downloaded_files.append(local_path)
+            else:
+                media["download_status"] = "download_failed"
+        else:
+            media["download_status"] = "signed_url_missing"
 
     SEEN_IDS.add(msg_id)
     save_seen_ids(SEEN_IDS)
@@ -470,14 +496,19 @@ def process_mms_message(message: dict[str, Any], source: str, webhook_payload: d
         if media_items:
             discord_lines.append(f"**Attachments:** {len(media_items)}")
             for media in media_items:
+                name = media.get("file_name") or media.get("id") or "attachment"
+                status_text = media.get("download_status", "unknown")
+
                 if media.get("local_path"):
-                    discord_lines.append(f"Saved: {media['local_path']}")
+                    discord_lines.append(f"{name}: downloaded -> {media['local_path']}")
+                elif status_text == "signed_url_missing":
+                    discord_lines.append(f"{name}: signed URL missing from provider payload")
+                elif status_text == "download_failed":
+                    discord_lines.append(f"{name}: signed URL present but download failed")
                 elif media.get("url"):
-                    discord_lines.append(f"Media URL: {media['url']}")
-                elif media.get("self_link"):
-                    discord_lines.append(f"Self link: {media['self_link']}")
+                    discord_lines.append(f"{name}: media URL present -> {media['url']}")
                 else:
-                    discord_lines.append(f"No downloadable media URL provided by {provider}.")
+                    discord_lines.append(f"{name}: media metadata only")
         else:
             discord_lines.append("**Attachments:** 0")
 
