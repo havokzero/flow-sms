@@ -10,7 +10,25 @@ ExecStart=/opt/flowsms/venv/bin/python /opt/flowsms/main.py
 Restart=always
 RestartSec=5
 User=root
+Group=root
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flowsms
+
+# Shutdown behavior
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+# Mild hardening that should still work in an LXC
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/flowsms
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
