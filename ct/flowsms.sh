@@ -2,7 +2,7 @@
 source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
 
 # Copyright (c) 2026
-# Author: Havok / OpenAI
+# Author: Havok
 # License: MIT
 # Source: https://github.com/havokzero/flow-sms
 
@@ -58,7 +58,9 @@ function install_flowsms() {
 
   msg_info "Preparing configuration"
   if [[ ! -f /opt/flowsms/settings.json ]]; then
-    cp /opt/flowsms/settings.example.json /opt/flowsms/settings.json
+    if [[ -f /opt/flowsms/settings.example.json ]]; then
+      cp /opt/flowsms/settings.example.json /opt/flowsms/settings.json
+    fi
   fi
   msg_ok "Configuration prepared"
 
@@ -89,9 +91,7 @@ EOF
 
 start
 build_container
-
 description
-
 install_flowsms
 
 msg_ok "Completed successfully!"
