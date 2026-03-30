@@ -1,0 +1,16 @@
+[Unit]
+Description=FlowSMS Webhook and Poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/flowsms
+ExecStart=/opt/flowsms/venv/bin/python /opt/flowsms/main.py
+Restart=always
+RestartSec=5
+User=root
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -31,62 +31,25 @@ function update_script() {
   fi
 
   msg_info "Updating ${APP}"
-  cd /opt/flowsms || exit
+  cd /opt/flowsms || exit 1
   git pull
+  /opt/flowsms/venv/bin/pip install --upgrade pip
   /opt/flowsms/venv/bin/pip install -r requirements.txt
+
+  if [[ -f /opt/flowsms/flowsms.service ]]; then
+    cp /opt/flowsms/flowsms.service /etc/systemd/system/flowsms.service
+    systemctl daemon-reload
+  fi
+
   systemctl restart flowsms
   msg_ok "Updated ${APP}"
   exit
 }
 
 function install_flowsms() {
-  msg_info "Installing dependencies"
-  apt-get update
-  apt-get install -y curl git python3 python3-venv python3-pip ca-certificates
-  msg_ok "Installed dependencies"
-
-  msg_info "Cloning FlowSMS"
-  mkdir -p /opt/flowsms
-  git clone https://github.com/havokzero/flow-sms.git /opt/flowsms
-  msg_ok "Cloned FlowSMS"
-
-  msg_info "Creating virtual environment"
-  python3 -m venv /opt/flowsms/venv
-  /opt/flowsms/venv/bin/pip install --upgrade pip
-  /opt/flowsms/venv/bin/pip install -r /opt/flowsms/requirements.txt
-  msg_ok "Virtual environment ready"
-
-  msg_info "Preparing configuration"
-  if [[ ! -f /opt/flowsms/settings.json ]]; then
-    if [[ -f /opt/flowsms/settings.example.json ]]; then
-      cp /opt/flowsms/settings.example.json /opt/flowsms/settings.json
-    fi
-  fi
-  msg_ok "Configuration prepared"
-
-  msg_info "Installing systemd service"
-  cat >/etc/systemd/system/flowsms.service <<'EOF'
-[Unit]
-Description=FlowSMS Webhook and Poller
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/flowsms
-ExecStart=/opt/flowsms/venv/bin/python /opt/flowsms/main.py
-Restart=always
-RestartSec=5
-User=root
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable -q --now flowsms
-  msg_ok "Systemd service installed"
+  msg_info "Running FlowSMS installer"
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/havokzero/flow-sms/master/install.sh)"
+  msg_ok "Installed ${APP}"
 }
 
 start
