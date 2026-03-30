@@ -51,7 +51,6 @@ function install_flowsms() {
 
   pct exec "${CTID}" -- bash -lc '
     set -euo pipefail
-
     export DEBIAN_FRONTEND=noninteractive
 
     apt-get update
@@ -69,31 +68,19 @@ function install_flowsms() {
     /opt/flowsms/venv/bin/pip install --upgrade pip
     /opt/flowsms/venv/bin/pip install -r /opt/flowsms/requirements.txt
 
-    if [[ -f /opt/flowsms/settings.example.json && ! -f /opt/flowsms/settings.json ]]; then
-      cp /opt/flowsms/settings.example.json /opt/flowsms/settings.json
+    if [[ ! -f /opt/flowsms/settings.json ]]; then
+      if [[ -f /opt/flowsms/settings.example.json ]]; then
+        cp /opt/flowsms/settings.example.json /opt/flowsms/settings.json
+      elif [[ -f /opt/flowsms/settings.json ]]; then
+        echo "[*] Placeholder settings.json already present in repo, leaving as-is"
+      fi
     fi
 
     if [[ -f /opt/flowsms/flowsms.service ]]; then
       cp /opt/flowsms/flowsms.service /etc/systemd/system/flowsms.service
     else
-      cat >/etc/systemd/system/flowsms.service <<EOF
-[Unit]
-Description=FlowSMS Webhook and Poller
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/flowsms
-ExecStart=/opt/flowsms/venv/bin/python /opt/flowsms/main.py
-Restart=always
-RestartSec=5
-User=root
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
+      echo "[!] flowsms.service missing in repo"
+      exit 1
     fi
 
     systemctl daemon-reload

@@ -35,24 +35,8 @@ echo "[*] Installing systemd service..."
 if [[ -f "$APP_DIR/flowsms.service" ]]; then
   cp "$APP_DIR/flowsms.service" /etc/systemd/system/flowsms.service
 else
-  cat >/etc/systemd/system/flowsms.service <<'EOF'
-[Unit]
-Description=FlowSMS Webhook and Poller
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/flowsms
-ExecStart=/opt/flowsms/venv/bin/python /opt/flowsms/main.py
-Restart=always
-RestartSec=5
-User=root
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  echo "[!] flowsms.service missing in repo"
+  exit 1
 fi
 
 systemctl daemon-reload
